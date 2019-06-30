@@ -3,16 +3,36 @@
 #define LED_AM    26
 #define LED_VM    27
 
-volatile int interruptCounter;
-int totalInterruptCounter;
+#define X_ZERO_R  4
+#define X_ZERO_S  16
+#define X_ZERO_T  17
+
+#define CHAVE_R   5
+#define CHAVE_S   18
+#define CHAVE_T   19
+
+uint8_t teste = 0;
 
 hw_timer_t *timer = NULL;
 portMUX_TYPE timerMUX = portMUX_INITIALIZER_UNLOCKED;
+
+// IRAM_ATTR = coloca o codigo na ram interna
+// muito mais rapida
+
 // interrupcao timer
-void IRAM_ATTR onTimer()
+void IRAM_ATTR onTimer(void)
 {
   portENTER_CRITICAL_ISR(&timerMUX);
-  digitalWrite(LED, !digitalRead(LED));
+  //digitalWrite(LED, !digitalRead(LED));
+  portEXIT_CRITICAL_ISR(&timerMUX);
+}
+
+void IRAM_ATTR isr_xzero_r(void)
+{
+  portENTER_CRITICAL_ISR(&timerMUX);
+  digitalWrite(LED_VM, !digitalRead(LED_VM));
+  digitalWrite(CHAVE_R, HIGH);
+  teste = 250;
   portEXIT_CRITICAL_ISR(&timerMUX);
 }
 
@@ -27,6 +47,8 @@ void menu(void)
 {
   char c = 0;
   uint8_t mult = 1;
+
+  Serial.begin(115200);
   
   Serial.print("Digite um valor de 0 a 15s para a partida: ");
   do {
@@ -59,17 +81,22 @@ void menu(void)
   else {
     Serial.println("Monofasico.");
   }
-  
+  Serial.end();
 }
  
 void setup() 
 {
-  Serial.begin(115200);
   // Set pin mode
   pinMode(LED,OUTPUT);
   pinMode(LED_VD, OUTPUT);
   pinMode(LED_AM, OUTPUT);
   pinMode(LED_VM, OUTPUT);
+
+  pinMode(CHAVE_R, OUTPUT);
+
+  pinMode(X_ZERO_R, INPUT_PULLUP);
+  pinMode(X_ZERO_S, INPUT_PULLUP);
+  pinMode(X_ZERO_T, INPUT_PULLUP);
 
   //menu();
 
@@ -81,19 +108,28 @@ void setup()
   // o endereco da funcao que trata a interrupcao
   // true = edge 
   timerAttachInterrupt(timer, &onTimer, 1);
+  // toda vez que o pino inverter o estado, tem um novo semi ciclo
+  attachInterrupt(digitalPinToInterrupt(X_ZERO_R), isr_xzero_r, FALLING);
   // a cada 1000ms, dispara a interrupcao
-  timerAlarmWrite(timer, 1000000, 1);
+  timerAlarmWrite(timer, 100000, 1);
   timerAlarmEnable(timer);
 }
  
-void loop() {
+void loop()
+{
   digitalWrite(LED_VD,HIGH);
   delay(1000);
+  timerStop(timer);
   digitalWrite(LED_VD,LOW);
   digitalWrite(LED_AM,HIGH);
   delay(1000);
+  timerRestart(timer);
   digitalWrite(LED_AM,LOW);
-  digitalWrite(LED_VM,HIGH);
-  delay(1000);
-  digitalWrite(LED_VM,LOW);
+
+  if (teste > 0) {
+    teste--;
+  }
+  else {
+    digitalWrite(CHAVE_R, LOW);
+  }
 }
