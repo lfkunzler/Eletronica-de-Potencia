@@ -163,7 +163,7 @@ void menu(void)
 
   Serial.begin(115200);
   
-  Serial.print("Digite um valor de 0 a 65s para a partida: ");
+  Serial.print("Digite um valor de 1 a 65s para a partida: ");
   do {
     if (Serial.available()) {
       c = Serial.read();
@@ -177,29 +177,25 @@ void menu(void)
     soft_cfg.tempo_soft = 30; // padrao trinta segundos
   }
   Serial.println(soft_cfg.tempo_soft);
-  
-  Serial.println("Digite M para mono ou T para trifasico:");
   c = 0;
+  Serial.print("Digite M para mono ou T para trifasico: ");
   do {
     if (Serial.available()) {
       c = Serial.read();
       if (c == 'T') {
         soft_cfg.tipo_carga = TIPO_CARGA_TRIFASICO;
+        Serial.println("Trifasico");
+        c = 10; // forca sair do loop
       }
       else {
         soft_cfg.tipo_carga = TIPO_CARGA_MONOFASICO;
+        Serial.println("Mnofasico");
+        c = 10; // forca sair do loop
       }
-    }
+    }    
   } while (c != 10);
-  
-  Serial.print("Tempo da partida suave [s]: ");
-  Serial.println(soft_cfg.tipo_carga);
-  if (soft_cfg.tipo_carga == TIPO_CARGA_TRIFASICO) {
-    Serial.println("Trifasico.");
-  }
-  else {
-    Serial.println("Monofasico.");
-  }
+
+  delay(100); // delay para dar tempo de imprimir a resposta
   Serial.end();
 }
 
