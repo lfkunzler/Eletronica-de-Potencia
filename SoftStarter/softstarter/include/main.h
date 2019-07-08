@@ -25,16 +25,15 @@
 #define TEMPO_MAX_SOFT    65 // segundos
 
 #define TEMPO_GATE_ACIONADO   1000
-#define TEMPO_INIC_DISPARO    7800 // microssegundos (depende do cross)
+#define TEMPO_INIC_DISPARO    7780 // microssegundos (depende do cross)
 
-#define TIPO_CARGA_MONOFASICO   0
-#define TIPO_CARGA_TRIFASICO    1
+#define TIPO_CARGA_MONOFASICO   1
+#define TIPO_CARGA_TRIFASICO    3
 
 typedef struct  {
   hw_timer_t *tmr;
   uint8_t f_dispara;
   uint8_t f_desl_gate;
-  uint16_t tempo_prox_disparo;
   uint16_t tempo_desl_gate;
   uint8_t f_aceita_disparo; // se aceita um novo disparo
 } analise_fase_t;
@@ -42,6 +41,9 @@ typedef struct  {
 typedef struct {
   uint8_t tempo_soft; // recebe o tempo do usuario e depois converte
   uint8_t tipo_carga; // mono ou tri
+  uint16_t tempo_prox_disparo; // em quanto tempo vai ser o prox disparo
+  uint8_t f_recalcula_disparo; // flag que habilita o recalculo de um novo disparo
+  uint16_t tempo_desliga_gate;
 } soft_cfg_t;
 
 // how to use platformIO: https://docs.platformio.org/en/latest/ide/vscode.html#quick-start

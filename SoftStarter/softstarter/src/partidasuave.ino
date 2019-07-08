@@ -6,14 +6,15 @@
 portMUX_TYPE timerMUX = portMUX_INITIALIZER_UNLOCKED;
 
 volatile analise_fase_t r, s, t; // r usada quando mono
-soft_cfg_t soft_cfg;
+volatile soft_cfg_t soft_cfg;
 
 // IRAM_ATTR = coloca o codigo na ram interna (muito mais rapida)
+
+// funcao de interrupcao do timer para fase R, dispara o triac
 void IRAM_ATTR isr_timer_r(void)
 {
   portENTER_CRITICAL_ISR(&timerMUX);
   r.f_aceita_disparo = 1;
-  r.tempo_desl_gate = TEMPO_GATE_ACIONADO;
   r.f_dispara = 1;
   //digitalWrite(CHAVE_R, HIGH);
   //timerStop(r.tmr);
@@ -30,19 +31,19 @@ void IRAM_ATTR isr_xzero_r(void)
     //timerWrite(r.tmr, r.tempo_liga);
     //timerRestart(r.tmr);
     timerWrite(r.tmr, 0);
-    timerAlarmWrite(r.tmr, r.tempo_prox_disparo, 0);
+    timerAlarmWrite(r.tmr, soft_cfg.tempo_prox_disparo, 0);
     timerAlarmEnable(r.tmr);
+    soft_cfg.f_recalcula_disparo++;
     digitalWrite(LED_VM, !digitalRead(LED_VM));
   }
   portEXIT_CRITICAL_ISR(&timerMUX);
 }
 
-// IRAM_ATTR = coloca o codigo na ram interna (muito mais rapida)
+// funcao de interrupcao do timer para fase S, dispara o triac
 void IRAM_ATTR isr_timer_s(void)
 {
   portENTER_CRITICAL_ISR(&timerMUX);
   s.f_aceita_disparo = 1;
-  s.tempo_desl_gate = TEMPO_GATE_ACIONADO;
   s.f_dispara = 1;
   //digitalWrite(CHAVE_R, HIGH);
   //timerStop(r.tmr);
@@ -59,19 +60,19 @@ void IRAM_ATTR isr_xzero_s(void)
     //timerWrite(r.tmr, r.tempo_liga);
     //timerRestart(r.tmr);
     timerWrite(s.tmr, 0);
-    timerAlarmWrite(s.tmr, s.tempo_prox_disparo, 0);
+    timerAlarmWrite(s.tmr, soft_cfg.tempo_prox_disparo, 0);
     timerAlarmEnable(s.tmr);
+    soft_cfg.f_recalcula_disparo++;
     digitalWrite(LED_AM, !digitalRead(LED_AM));
   }
   portEXIT_CRITICAL_ISR(&timerMUX);
 }
 
-// IRAM_ATTR = coloca o codigo na ram interna (muito mais rapida)
+// funcao de interrupcao do timer para fase R, dispara o triac
 void IRAM_ATTR isr_timer_t(void)
 {
   portENTER_CRITICAL_ISR(&timerMUX);
   t.f_aceita_disparo = 1;
-  t.tempo_desl_gate = TEMPO_GATE_ACIONADO;
   t.f_dispara = 1;
   //digitalWrite(CHAVE_R, HIGH);
   //timerStop(r.tmr);
@@ -88,12 +89,14 @@ void IRAM_ATTR isr_xzero_t(void)
     //timerWrite(r.tmr, r.tempo_liga);
     //timerRestart(r.tmr);
     timerWrite(t.tmr, 0);
-    timerAlarmWrite(t.tmr, t.tempo_prox_disparo, 0);
+    timerAlarmWrite(t.tmr, soft_cfg.tempo_prox_disparo, 0);
     timerAlarmEnable(t.tmr);
+    soft_cfg.f_recalcula_disparo++;
     digitalWrite(LED_VD, !digitalRead(LED_VD));
   }
   portEXIT_CRITICAL_ISR(&timerMUX);
 }
+
 
 /*
  * nome: faseInic
@@ -110,8 +113,8 @@ void faseInic(analise_fase_t *fase, uint8_t id, void (*cb_tmr)(), void (*cb_x0)(
 {
   fase->f_desl_gate = 0;
   fase->f_dispara = 0;
-  fase->tempo_desl_gate = 0;
-  fase->tempo_prox_disparo = TEMPO_INIC_DISPARO;
+  fase->tempo_desl_gate = 1;
+  fase->f_aceita_disparo = 1;
   // timerBegin(o numero do timer, prescaler, up = true)
   // como o oscilador eh 80MHz, prescaler em 80 gera 
   // 1.000.000 incrementos por segundo
@@ -129,6 +132,30 @@ void faseInic(analise_fase_t *fase, uint8_t id, void (*cb_tmr)(), void (*cb_x0)(
   //timerAlarmEnable(fase->tmr);
 }
 
+/*
+ * handler para cada fase
+ */
+void faseHandler(analise_fase_t *fase, uint8_t pino)
+{
+  if (fase->f_dispara) {
+    fase->f_dispara = 0;
+    fase->f_desl_gate = 1;
+    digitalWrite(pino, HIGH);    
+    fase->tempo_desl_gate = soft_cfg.tempo_desliga_gate;
+  }
+  else {
+    if (fase->f_desl_gate) {
+      if (fase->tempo_desl_gate > 0) {
+        fase->tempo_desl_gate--;
+      }
+      else {
+        fase->tempo_desl_gate = 0;
+        digitalWrite(pino, LOW);
+      }
+    }
+  }
+}
+
 void menu(void)
 {
   char c = 0;
@@ -136,7 +163,7 @@ void menu(void)
 
   Serial.begin(115200);
   
-  Serial.print("Digite um valor de 0 a 15s para a partida: ");
+  Serial.print("Digite um valor de 0 a 65s para a partida: ");
   do {
     if (Serial.available()) {
       c = Serial.read();
@@ -146,6 +173,9 @@ void menu(void)
       }
     }    
   } while (c != 10);
+  if (soft_cfg.tempo_soft == 0 || soft_cfg.tempo_soft > 65) {
+    soft_cfg.tempo_soft = 30; // padrao trinta segundos
+  }
   Serial.println(soft_cfg.tempo_soft);
   
   Serial.println("Digite M para mono ou T para trifasico:");
@@ -153,21 +183,68 @@ void menu(void)
   do {
     if (Serial.available()) {
       c = Serial.read();
-      if (c == 'M' && c == 'T') {
-        soft_cfg.tipo_carga = c == 'M' ? 1 : 0;
+      if (c == 'T') {
+        soft_cfg.tipo_carga = TIPO_CARGA_TRIFASICO;
+      }
+      else {
+        soft_cfg.tipo_carga = TIPO_CARGA_MONOFASICO;
       }
     }
   } while (c != 10);
   
   Serial.print("Tempo da partida suave [s]: ");
   Serial.println(soft_cfg.tipo_carga);
-  if (soft_cfg.tipo_carga) {
+  if (soft_cfg.tipo_carga == TIPO_CARGA_TRIFASICO) {
     Serial.println("Trifasico.");
   }
   else {
     Serial.println("Monofasico.");
   }
   Serial.end();
+}
+
+void softInic(void)
+{
+  soft_cfg.f_recalcula_disparo = 0;
+  soft_cfg.tempo_prox_disparo = TEMPO_INIC_DISPARO;
+  soft_cfg.tempo_desliga_gate = TEMPO_GATE_ACIONADO;
+  soft_cfg.tempo_soft = 10; // 10 segundos
+  soft_cfg.tipo_carga = TIPO_CARGA_MONOFASICO;
+  // menu()
+
+  //soft_cfg.tempo_soft = 66-soft_cfg.tempo_soft; // o decremento da soft por semi-ciclo
+  soft_cfg.tempo_soft = (60/soft_cfg.tempo_soft);
+
+  faseInic((analise_fase_t *)&r, ID_FASE_R, &isr_timer_r, &isr_xzero_r, X_ZERO_R);
+  if (soft_cfg.tipo_carga == TIPO_CARGA_TRIFASICO) {
+    faseInic((analise_fase_t *)&s, ID_FASE_S, &isr_timer_s, &isr_xzero_s, X_ZERO_S);
+    faseInic((analise_fase_t *)&t, ID_FASE_T, &isr_timer_t, &isr_xzero_t, X_ZERO_T);
+  }
+}
+
+void softHandler(void)
+{ 
+  // cada semi-ciclo incrementa um
+  // quando for o mesmo numero incrementos que qtde de fases configuradas
+  if (soft_cfg.f_recalcula_disparo >= soft_cfg.tipo_carga) {
+    soft_cfg.f_recalcula_disparo = 0;
+
+  // proximo ciclo = ciclo_atual - (66 - segundos_escolhidos)
+    if (soft_cfg.tempo_prox_disparo > soft_cfg.tempo_soft && soft_cfg.tempo_prox_disparo <= TEMPO_INIC_DISPARO) {
+      soft_cfg.tempo_prox_disparo -= soft_cfg.tempo_soft;
+      soft_cfg.tempo_desliga_gate = TEMPO_GATE_ACIONADO;
+    }
+    else {
+      soft_cfg.tempo_prox_disparo = TEMPO_INIC_DISPARO+1;
+      soft_cfg.tempo_desliga_gate = TEMPO_GATE_ACIONADO*4;
+    }
+  }
+
+  faseHandler((analise_fase_t *)&r, CHAVE_R);
+  if (soft_cfg.tipo_carga == TIPO_CARGA_TRIFASICO) {
+    faseHandler((analise_fase_t *)&s, CHAVE_S);
+    faseHandler((analise_fase_t *)&t, CHAVE_T);
+  }
 }
 
 void setup() 
@@ -186,48 +263,20 @@ void setup()
   pinMode(X_ZERO_R, INPUT_PULLDOWN);
   pinMode(X_ZERO_S, INPUT_PULLDOWN);
   pinMode(X_ZERO_T, INPUT_PULLUP);
+
+  digitalWrite(CHAVE_R, LOW);
+  digitalWrite(CHAVE_S, LOW);
+  digitalWrite(CHAVE_T, LOW);
+
+  delay(200);
   
-  //menu();
-  soft_cfg.tempo_soft = 10;
-  soft_cfg.tipo_carga = TIPO_CARGA_MONOFASICO;
-
-  faseInic((analise_fase_t *)&r, ID_FASE_R, &isr_timer_r, &isr_xzero_r, X_ZERO_R);
-
+  menu();
   digitalWrite(LED, HIGH);
-}
 
-void faseHandler(analise_fase_t *fase, uint8_t pino)
-{
-  if (fase->f_dispara) {
-    fase->f_dispara = 0;
-    fase->f_desl_gate = 1;
-    digitalWrite(pino, HIGH);
-    // proximo ciclo = ciclo_atual - (66 - segundos_escolhidos)
-    if (fase->tempo_prox_disparo > soft_cfg.tempo_soft && fase->tempo_prox_disparo <= TEMPO_INIC_DISPARO) {
-      fase->tempo_prox_disparo -= soft_cfg.tempo_soft;
-      fase->tempo_desl_gate = TEMPO_GATE_ACIONADO;
-    }
-    else {
-      fase->tempo_prox_disparo = TEMPO_INIC_DISPARO+10;
-      fase->tempo_desl_gate = TEMPO_GATE_ACIONADO*4;
-    }
-  }
-  else {
-    if (fase->f_desl_gate) {
-      if (fase->tempo_desl_gate > 0) {
-        fase->tempo_desl_gate--;
-      }
-      else {
-        fase->tempo_desl_gate = 0;
-        digitalWrite(pino, LOW);
-      }
-    }
-  }
+  softInic();
 }
 
 void loop()
 {
-  //timerStop(timer);
-  //timerRestart(timer);
-  faseHandler((analise_fase_t *)&r, CHAVE_R);
+  softHandler();
 }
